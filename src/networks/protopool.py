@@ -413,7 +413,7 @@ def update_prototypes_on_batch_protopool(search_batch_input,
     with torch.no_grad():
         search_batch = search_batch.cuda()
         # this computation currently is not parallelized
-        protoL_input_torch, proto_dist_torch = model_lll.push_forward(search_batch)
+        protoL_input_torch, proto_dist_torch = model_lll.push_forward(search_batch, task)
 
     protoL_input_ = np.copy(protoL_input_torch.detach().cpu().numpy())
     proto_dist_ = np.copy(proto_dist_torch.detach().cpu().numpy())
