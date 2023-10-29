@@ -245,6 +245,7 @@ def main(argv=None):
 
     # Args -- Exemplars Management
     from datasets.exemplars_dataset import ExemplarsDataset
+
     Appr_ExemplarsDataset = Appr.exemplars_dataset_class()
     if Appr_ExemplarsDataset:
         assert issubclass(Appr_ExemplarsDataset, ExemplarsDataset)
@@ -259,6 +260,7 @@ def main(argv=None):
     # Args -- GridSearch
     if args.gridsearch_tasks > 0:
         from gridsearch import GridSearch
+
         gs_args, extra_args = GridSearch.extra_parser(extra_args)
         Appr_finetuning = getattr(importlib.import_module(name='approach.finetuning'), 'Appr')
         assert issubclass(Appr_finetuning, Inc_Learning_Appr)
