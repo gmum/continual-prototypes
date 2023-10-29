@@ -29,7 +29,7 @@ class ProtoPool_head(nn.Module):
     def __init__(self, prototype_shape, num_prototypes, num_descriptive, num_classes, prototype_activation_function,
                  focal, share_add_ons=True, first_add_on_layer_in_channels=None, incorrect_weight=-0.5,
                  incorrect_weight_btw_tasks=False, use_last_layer=True,
-                 prototype_vectors: Optional[torch.Tensor] = None):
+                 shared_prototype_vector: Optional[torch.Tensor] = None):
         super(ProtoPool_head, self).__init__()
         self.num_prototypes = num_prototypes
         self.num_descriptive = num_descriptive
@@ -41,8 +41,8 @@ class ProtoPool_head(nn.Module):
         self.share_add_ons = share_add_ons
         self.incorrect_weight = incorrect_weight
 
-        if prototype_vectors is not None:
-            self.prototype_vectors = prototype_vectors
+        if shared_prototype_vector is not None:
+            self.prototype_vectors = shared_prototype_vector
         else:
             self.prototype_vectors = nn.Parameter(torch.rand(self.prototype_shape), requires_grad=True)
 
@@ -196,7 +196,7 @@ class ProtoPool(nn.Module):
                  incorrect_weight=-0.5, incorrect_weight_btw_tasks=False, repeat_task_0=False,
                  num_descriptive=10, use_thresh=False, arch='resnet34', pretrained=True,
                  proto_depth=128, use_last_layer=False, inat=False, pp_ortho=True, pp_gumbel=True, gumbel_time=30,
-                 freeze_after_first_task: bool = False):
+                 share_prototypes_between_tasks: bool = False):
 
         super(ProtoPool, self).__init__()
         self.focal = focal
@@ -214,7 +214,7 @@ class ProtoPool(nn.Module):
         self.incorrect_weight = incorrect_weight
         self.incorrect_weight_btw_tasks = incorrect_weight_btw_tasks
         self.repeat_task_0 = repeat_task_0
-        self.freeze_after_first_task = freeze_after_first_task
+        self.share_prototypes_between_tasks = share_prototypes_between_tasks
 
         self.num_descriptive = num_descriptive
         self.use_thresh = use_thresh
@@ -282,7 +282,7 @@ class ProtoPool(nn.Module):
 
                 self.add_on_layers = nn.Sequential(*add_on_layers)
 
-        if freeze_after_first_task:
+        if share_prototypes_between_tasks:
             self.shared_proto_vector = nn.Parameter(torch.rand(self.prototype_shape), requires_grad=True)
         else:
             self.shared_proto_vector = None
@@ -292,7 +292,7 @@ class ProtoPool(nn.Module):
                                              self.focal, self.share_add_ons,
                                              first_add_on_layer_in_channels, incorrect_weight=self.incorrect_weight,
                                              use_last_layer=use_last_layer,
-                                             prototype_vectors=self.shared_proto_vector)
+                                             shared_prototype_vector=self.shared_proto_vector)
 
         self.head_var = 'protopool_head'
 
@@ -598,7 +598,7 @@ def update_prototypes_on_batch_protopool(search_batch_input,
 
 def construct_ProtoPool(base_architecture, pretrained=True, img_size=224,
                         prototype_shape=(202, 512, 1, 1), num_classes=200,
-                        freeze_after_first_task=False,
+                        share_prototypes_between_tasks=False,
                         prototype_activation_function='log',
                         add_on_layers_type='bottleneck', focal=False, warm_num=10, push_at=10, num_push_tune=10,
                         sep_weight=-0.08, share_add_ons=True, incorrect_weight=-0.5,
@@ -624,7 +624,7 @@ def construct_ProtoPool(base_architecture, pretrained=True, img_size=224,
                                                          prototype_kernel_size=prototype_shape[2])
     return ProtoPool(features=features,
                      img_size=img_size,
-                     freeze_after_first_task=freeze_after_first_task,
+                     share_prototypes_between_tasks=share_prototypes_between_tasks,
                      prototype_shape=prototype_shape,
                      proto_layer_rf_info=proto_layer_rf_info,
                      num_classes=num_classes,

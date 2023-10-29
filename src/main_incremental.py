@@ -119,6 +119,8 @@ def main(argv=None):
     # ProtoPool args
     parser.add_argument('--freeze_after_first_task', default=False, type=bool,
                         help='Freeze the model and only fine-tune heads after the first task (default=%(default)s)')
+    parser.add_argument('--share_prototypes_between_tasks', default=False, type=bool,
+                        help='Share prototypes between different heads (default=%(default)s)')
     parser.add_argument('--protos_per_pool', type=int, default=51)
     parser.add_argument('--num_descriptive', type=int, default=10)
     parser.add_argument('--pp_ortho', action='store_true')
@@ -135,6 +137,13 @@ def main(argv=None):
                        lr_patience=args.lr_patience, clipgrad=args.clipping, momentum=args.momentum,
                        wd=args.weight_decay, multi_softmax=args.multi_softmax, wu_nepochs=args.warmup_nepochs,
                        wu_lr_factor=args.warmup_lr_factor, fix_bn=args.fix_bn, eval_on_train=args.eval_on_train)
+
+    if args.share_prototypes_between_tasks and 'protopool' not in args.network:
+        raise NotImplementedError('Currently, sharing prototypes between tasks is only implemented for ProtoPool')
+    if args.freeze_after_first_task and not args.share_prototypes_between_tasks:
+        raise NotImplementedError('Currently, freezing prototypes after first task is only implemented when sharing '
+                                  'prototypes between tasks')
+
 
     if args.no_cudnn_deterministic:
         print('WARNING: CUDNN Deterministic will be disabled.')
@@ -204,7 +213,7 @@ def main(argv=None):
         from networks.protopool import construct_ProtoPool
         init_model = construct_ProtoPool(
             args.network.replace('protopool_', ''),
-            freeze_after_first_task=args.freeze_after_first_task,
+            share_prototypes_between_tasks=args.share_prototypes_between_tasks,
             pretrained=True,
             img_size=224,
             prototype_shape=(args.protos_per_pool, args.proto_depth, 1, 1),
@@ -308,6 +317,8 @@ def main(argv=None):
     if Appr_ExemplarsDataset:
         appr_kwargs['exemplars_dataset'] = Appr_ExemplarsDataset(transform, class_indices,
                                                                  **appr_exemplars_dataset_args.__dict__)
+    if args.freeze_after_first_task:
+        appr_kwargs['freeze_after_first_task'] = True
     utils.seed_everything(seed=args.seed)
     appr = Appr(net, device, **appr_kwargs)
 

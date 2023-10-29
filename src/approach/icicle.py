@@ -23,7 +23,8 @@ class Appr(Inc_Learning_Appr_PPNet):
                  lr_old=None, permute_settlement=False, freeze_after_first_task=False):
         super(Appr, self).__init__(model, device, nepochs, lr, lr_min, lr_factor, lr_patience, clipgrad, momentum, wd,
                                    multi_softmax, wu_nepochs, wu_lr_factor, fix_bn, eval_on_train, logger,
-                                   exemplars_dataset, freeze_after_first_task=freeze_after_first_task)
+                                   exemplars_dataset)
+        self.freeze_after_first_task = freeze_after_first_task
         self.model_old = None
         self.lamb = lamb
         self.T = T
@@ -78,39 +79,55 @@ class Appr(Inc_Learning_Appr_PPNet):
     def _get_optimizers(self, t):
         """Returns the optimizer"""
         if not self.model.model.share_add_ons:
-            warm_params = [
-                {'params': self.model.heads[t].add_on_layers.parameters(), 'lr': 3 * self.lr, 'weight_decay': self.wd},
-                {'params': self.model.heads[t].prototype_vectors, 'lr': 3 * self.lr},
-            ]
-            joint_params = [
-                {'params': self.model.model.features.parameters(), 'lr': self.lr / 10, 'weight_decay': self.wd},
-                {'params': self.model.heads[t].add_on_layers.parameters(), 'lr': 3 * self.lr,
-                 'weight_decay': self.wd},
-                {'params': self.model.heads[t].prototype_vectors, 'lr': 3 * self.lr},
-            ]
-            push_params = [{'params': self.model.heads[t].last_layer.parameters(), 'lr': self.lr,
-                            'weight_decay': self.wd},
-                           ]
+            if self.freeze_after_first_task and t > 0:
+                params = [
+                    {'params': self.model.heads[t].add_on_layers.parameters(), 'lr': 3 * self.lr,
+                     'weight_decay': self.wd},
+                ]
+                warm_params = params
+                joint_params = params
+                push_params = [{'params': self.model.heads[t].last_layer.parameters(), 'lr': self.lr,
+                                'weight_decay': self.wd}]
+            else:
+                warm_params = [
+                    {'params': self.model.heads[t].add_on_layers.parameters(), 'lr': 3 * self.lr, 'weight_decay':
+                        self.wd},
+                    {'params': self.model.heads[t].prototype_vectors, 'lr': 3 * self.lr},
+                ]
+                joint_params = [
+                    {'params': self.model.model.features.parameters(), 'lr': self.lr / 10, 'weight_decay': self.wd},
+                    {'params': self.model.heads[t].add_on_layers.parameters(), 'lr': 3 * self.lr,
+                     'weight_decay': self.wd},
+                    {'params': self.model.heads[t].prototype_vectors, 'lr': 3 * self.lr},
+                ]
+                push_params = [{'params': self.model.heads[t].last_layer.parameters(), 'lr': self.lr,
+                                'weight_decay': self.wd}]
         else:
-            warm_params = [
-                {'params': self.model.model.add_on_layers.parameters(), 'lr': 3 * self.lr, 'weight_decay': self.wd},
-                {'params': self.model.heads[t].prototype_vectors, 'lr': 3 * self.lr},
-            ]
-            joint_params = [
-                {'params': self.model.model.features.parameters(), 'lr': self.lr / 10, 'weight_decay': self.wd},
-                {'params': self.model.model.add_on_layers.parameters(), 'lr': 3 * self.lr,
-                 'weight_decay': self.wd},
-                {'params': self.model.heads[t].prototype_vectors, 'lr': 3 * self.lr},
-            ]
-            push_params = [{'params': self.model.heads[t].last_layer.parameters(), 'lr': self.lr,
-                            'weight_decay': self.wd},
-                           ]
+            if self.freeze_after_first_task and t > 0:
+                warm_params = []
+                joint_params = []
+                push_params = [{'params': self.model.heads[t].last_layer.parameters(), 'lr': self.lr,
+                                'weight_decay': self.wd}]
+            else:
+                warm_params = [
+                    {'params': self.model.model.add_on_layers.parameters(), 'lr': 3 * self.lr, 'weight_decay': self.wd},
+                    {'params': self.model.heads[t].prototype_vectors, 'lr': 3 * self.lr},
+                ]
+                joint_params = [
+                    {'params': self.model.model.features.parameters(), 'lr': self.lr / 10, 'weight_decay': self.wd},
+                    {'params': self.model.model.add_on_layers.parameters(), 'lr': 3 * self.lr,
+                     'weight_decay': self.wd},
+                    {'params': self.model.heads[t].prototype_vectors, 'lr': 3 * self.lr},
+                ]
+                push_params = [{'params': self.model.heads[t].last_layer.parameters(), 'lr': self.lr,
+                                'weight_decay': self.wd},
+                               ]
 
         if isinstance(self.model.model, ProtoPool):
             warm_params = warm_params + ([{'params': self.model.heads[t].proto_presence, 'lr': 3 * self.lr}])
             joint_params = joint_params + ([{'params': self.model.heads[t].proto_presence, 'lr': 3 * self.lr}])
 
-        if t > 0:
+        if t > 0 and not self.freeze_after_first_task:
             joint_params.extend([
                 {'params': self.model.heads[i].prototype_vectors, 'lr': self.lr_old} for i in range(t)
             ])
@@ -192,7 +209,7 @@ class Appr(Inc_Learning_Appr_PPNet):
                 reps = torch.cat(reps, dim=0).cpu()
                 dists_all = torch.cat(dists_all, dim=0).cpu()
 
-                kmean = KMeans(n_clusters=self.model.heads[0].prototype_vectors.shape[0], max_iter=10)
+                kmean = KMeans(n_clusters=self.model.heads[0].prototype_vectors.shape[0], max_iter=10, n_init=10)
                 inclass_reps = reps.permute(0, 2, 3, 1).reshape(-1, reps.shape[1]).numpy()
                 cond = ((dists_all.mean(1).flatten() <= qs[1]))  # * (dists_all.mean(1).flatten() >= qs[0]))
                 set_of_reps = inclass_reps[cond]
@@ -260,6 +277,18 @@ class Appr(Inc_Learning_Appr_PPNet):
             if len(self.model.neg_heads) > 0:
                 for p in self.model.neg_heads[t - 1].parameters():
                     p.requires_grad = False
+
+        if self.freeze_after_first_task and t > 0:
+            self.model.heads[t].prototype_vectors.requires_grad = False
+            self.model.model.shared_proto_vector.requires_grad = False
+            if self.model.model.share_add_ons:
+                for p in self.model.model.add_on_layers.parameters():
+                    p.requires_grad = False
+            else:
+                for p in self.model.heads[t].add_on_layers.parameters():
+                    p.requires_grad = True
+            for p in self.model.model.features.parameters():
+                p.requires_grad = False
 
         gumbel_scale = self.model.model.lambda1(e) if \
             (isinstance(self.model.model, ProtoPool) and self.model.model.pp_gumbel) else 0

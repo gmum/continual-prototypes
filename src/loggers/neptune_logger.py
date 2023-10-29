@@ -1,6 +1,10 @@
 import os
 
-import neptune
+try:
+    import neptune
+except ImportError:
+    print("Neptune is not installed. Cannot use neptune logger.")
+
 import torch
 
 from loggers.exp_logger import ExperimentLogger
@@ -53,6 +57,12 @@ class Logger(ExperimentLogger):
 
     def log_args(self, args):
         neptune_tags = [args.approach, args.network, args.datasets]
+
+        if args.freeze_after_first_task:
+            neptune_tags.append("freeze_after_first_task")
+        if args.share_prototypes_between_tasks:
+            neptune_tags.append("share_prototypes")
+
         for tag in neptune_tags:
             self.neptune_run["sys/tags"].add(tag)
         params = {

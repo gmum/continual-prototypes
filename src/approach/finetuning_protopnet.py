@@ -11,10 +11,10 @@ class Appr(Inc_Learning_Appr_PPNet):
 
     def __init__(self, model, device, nepochs=100, lr=0.05, lr_min=1e-4, lr_factor=3, lr_patience=5, clipgrad=10000,
                  momentum=0, wd=0, multi_softmax=False, wu_nepochs=0, wu_lr_factor=1, fix_bn=False, eval_on_train=False,
-                 logger=None, exemplars_dataset=None, all_outputs=True, freeze_after_first_task=False):
+                 logger=None, exemplars_dataset=None, all_outputs=True):
         super(Appr, self).__init__(model, device, nepochs, lr, lr_min, lr_factor, lr_patience, clipgrad, momentum, wd,
                                    multi_softmax, wu_nepochs, wu_lr_factor, fix_bn, eval_on_train, logger,
-                                   exemplars_dataset, freeze_after_first_task=freeze_after_first_task)
+                                   exemplars_dataset)
         self.all_out = all_outputs
 
     @staticmethod
@@ -82,7 +82,8 @@ class Appr(Inc_Learning_Appr_PPNet):
             reps = torch.cat(reps, dim=0).cpu()
             dists_all = torch.cat(dists_all, dim=0).cpu()
 
-            kmean = KMeans(n_clusters=self.model.heads[0].prototype_vectors.shape[0], max_iter=10)
+            kmean = KMeans(n_clusters=self.model.heads[0].prototype_vectors.shape[0], max_iter=10,
+                           n_init=10)
             inclass_reps = reps.permute(0, 2, 3, 1).reshape(-1, reps.shape[1]).numpy()
             cond = ((dists_all.mean(1).flatten() <= qs[1]) * (dists_all.mean(1).flatten() >= qs[0]))
             set_of_reps = inclass_reps[cond]
