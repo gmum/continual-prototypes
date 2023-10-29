@@ -20,11 +20,13 @@ class Appr(Inc_Learning_Appr_PPNet):
     def __init__(self, model, device, nepochs=100, lr=0.05, lr_min=1e-4, lr_factor=3, lr_patience=5, clipgrad=10000,
                  momentum=0, wd=0, multi_softmax=False, wu_nepochs=0, wu_lr_factor=1, fix_bn=False, eval_on_train=False,
                  logger=None, exemplars_dataset=None, lamb=1, T=2, perc=5, similarity_reg=False, normalize_sim=False,
-                 lr_old=None, permute_settlement=False, freeze_after_first_task=False):
+                 lr_old=None, permute_settlement=False,
+                 freeze_after_first_task=False, share_prototypes_between_tasks= False):
         super(Appr, self).__init__(model, device, nepochs, lr, lr_min, lr_factor, lr_patience, clipgrad, momentum, wd,
                                    multi_softmax, wu_nepochs, wu_lr_factor, fix_bn, eval_on_train, logger,
                                    exemplars_dataset)
         self.freeze_after_first_task = freeze_after_first_task
+        self.share_prototypes_between_tasks = share_prototypes_between_tasks
         self.model_old = None
         self.lamb = lamb
         self.T = T
@@ -128,12 +130,13 @@ class Appr(Inc_Learning_Appr_PPNet):
             joint_params = joint_params + ([{'params': self.model.heads[t].proto_presence, 'lr': 3 * self.lr}])
 
         if t > 0 and not self.freeze_after_first_task:
-            joint_params.extend([
-                {'params': self.model.heads[i].prototype_vectors, 'lr': self.lr_old} for i in range(t)
-            ])
-            warm_params.extend([
-                {'params': self.model.heads[i].prototype_vectors, 'lr': self.lr_old} for i in range(t)
-            ])
+            if not self.share_prototypes_between_tasks:
+                joint_params.extend([
+                    {'params': self.model.heads[i].prototype_vectors, 'lr': self.lr_old} for i in range(t)
+                ])
+                warm_params.extend([
+                    {'params': self.model.heads[i].prototype_vectors, 'lr': self.lr_old} for i in range(t)
+                ])
             if not self.model.model.share_add_ons:
                 joint_params.extend([
                     {'params': self.model.heads[i].add_on_layers.parameters(), 'lr': self.lr_old} for i in range(t)

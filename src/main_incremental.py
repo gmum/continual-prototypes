@@ -317,8 +317,11 @@ def main(argv=None):
     if Appr_ExemplarsDataset:
         appr_kwargs['exemplars_dataset'] = Appr_ExemplarsDataset(transform, class_indices,
                                                                  **appr_exemplars_dataset_args.__dict__)
+    if args.share_prototypes_between_tasks:
+        appr_kwargs['share_prototypes_between_tasks'] = True
     if args.freeze_after_first_task:
         appr_kwargs['freeze_after_first_task'] = True
+
     utils.seed_everything(seed=args.seed)
     appr = Appr(net, device, **appr_kwargs)
 
