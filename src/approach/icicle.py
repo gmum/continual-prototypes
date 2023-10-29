@@ -5,6 +5,7 @@ from sklearn.cluster import KMeans
 
 from .incremental_learning import Inc_Learning_Appr_PPNet
 from networks.tesnet import TesNet
+from networks.protopool import ProtoPool
 from datasets.exemplars_dataset import ExemplarsDataset
 
 
@@ -16,52 +17,13 @@ class Appr(Inc_Learning_Appr_PPNet):
     # Weight decay of 0.0005 is used in the original article (page 4).
     # Page 4: "The warm-up step greatly enhances fine-tuning’s old-task performance, but is not so crucial to either our
     #  method or the compared Less Forgetting Learning (see Table 2(b))."
-    def __init__(
-        self,
-        model,
-        device,
-        nepochs=100,
-        lr=0.05,
-        lr_min=1e-4,
-        lr_factor=3,
-        lr_patience=5,
-        clipgrad=10000,
-        momentum=0,
-        wd=0,
-        multi_softmax=False,
-        wu_nepochs=0,
-        wu_lr_factor=1,
-        fix_bn=False,
-        eval_on_train=False,
-        logger=None,
-        exemplars_dataset=None,
-        lamb=1,
-        T=2,
-        perc=5,
-        similarity_reg=False,
-        normalize_sim=False,
-        lr_old=None,
-        permute_settlement=False,
-    ):
-        super(Appr, self).__init__(
-            model,
-            device,
-            nepochs,
-            lr,
-            lr_min,
-            lr_factor,
-            lr_patience,
-            clipgrad,
-            momentum,
-            wd,
-            multi_softmax,
-            wu_nepochs,
-            wu_lr_factor,
-            fix_bn,
-            eval_on_train,
-            logger,
-            exemplars_dataset,
-        )
+    def __init__(self, model, device, nepochs=100, lr=0.05, lr_min=1e-4, lr_factor=3, lr_patience=5, clipgrad=10000,
+                 momentum=0, wd=0, multi_softmax=False, wu_nepochs=0, wu_lr_factor=1, fix_bn=False, eval_on_train=False,
+                 logger=None, exemplars_dataset=None, lamb=1, T=2, perc=5, similarity_reg=False, normalize_sim=False,
+                 lr_old=None, permute_settlement=False):
+        super(Appr, self).__init__(model, device, nepochs, lr, lr_min, lr_factor, lr_patience, clipgrad, momentum, wd,
+                                   multi_softmax, wu_nepochs, wu_lr_factor, fix_bn, eval_on_train, logger,
+                                   exemplars_dataset)
         self.model_old = None
         self.lamb = lamb
         self.T = T
@@ -86,154 +48,87 @@ class Appr(Inc_Learning_Appr_PPNet):
         # Page 5: "lambda is a loss balance weight, set to 1 for most our experiments. Making lambda larger will favor
         # the old task performance over the new task’s, so we can obtain a old-task-new-task performance line by
         # changing lambda."
-        parser.add_argument(
-            "--lamb",
-            default=0.25,
-            type=float,
-            required=False,
-            help="Forgetting-intransigence trade-off (default=%(default)s)",
-        )
+        parser.add_argument('--lamb', default=0.25, type=float, required=False,
+                            help='Forgetting-intransigence trade-off (default=%(default)s)')
         # Page 5: "We use T=2 according to a grid search on a held out set, which aligns with the authors’
         #  recommendations." -- Using a higher value for T produces a softer probability distribution over classes.
-        parser.add_argument(
-            "--T",
-            default=2,
-            type=int,
-            required=False,
-            help="Temperature scaling (default=%(default)s)",
-        )
-        parser.add_argument(
-            "--perc",
-            default=97,
-            type=int,
-            required=False,
-            help="Percentile to mask the acts",
-        )
-        parser.add_argument(
-            "--similarity_reg",
-            action="store_true",
-            help="Whether to use similarity or distances to regularize",
-        )
-        parser.add_argument(
-            "--normalize_sim",
-            action="store_true",
-            help="Whether to normalize the similarities",
-        )
-        parser.add_argument(
-            "--lr_old", default=0.25, type=float, required=False, help="Learning rate"
-        )
-        parser.add_argument(
-            "--permute_settlement",
-            action="store_true",
-            help="Whether to permute protots to settlement",
-        )
+        parser.add_argument('--T', default=2, type=int, required=False,
+                            help='Temperature scaling (default=%(default)s)')
+        parser.add_argument('--perc', default=97, type=int, required=False,
+                            help='Percentile to mask the acts')
+        parser.add_argument('--similarity_reg', action='store_true',
+                            help='Whether to use similarity or distances to regularize')
+        parser.add_argument('--normalize_sim', action='store_true',
+                            help='Whether to normalize the similarities')
+        parser.add_argument('--lr_old', default=0.25, type=float, required=False,
+                            help='Learning rate')
+        parser.add_argument('--permute_settlement', action='store_true',
+                            help='Whether to permute protots to settlement')
         return parser.parse_known_args(args)
 
     def _get_optimizer(self):
         """Returns the optimizer"""
         if len(self.exemplars_dataset) == 0 and len(self.model.heads) > 1:
             # if there are no exemplars, previous heads are not modified
-            params = list(self.model.model.parameters()) + list(
-                self.model.heads[-1].parameters()
-            )
+            params = list(self.model.model.parameters()) + list(self.model.heads[-1].parameters())
         else:
             params = self.model.parameters()
-        return torch.optim.SGD(
-            params, lr=self.lr, weight_decay=self.wd, momentum=self.momentum
-        )
+        return torch.optim.SGD(params, lr=self.lr, weight_decay=self.wd, momentum=self.momentum)
 
     def _get_optimizers(self, t):
         """Returns the optimizer"""
         if not self.model.model.share_add_ons:
             warm_params = [
-                {
-                    "params": self.model.heads[t].add_on_layers.parameters(),
-                    "lr": 3 * self.lr,
-                    "weight_decay": self.wd,
-                },
-                {"params": self.model.heads[t].prototype_vectors, "lr": 3 * self.lr},
+                {'params': self.model.heads[t].add_on_layers.parameters(), 'lr': 3 * self.lr, 'weight_decay': self.wd},
+                {'params': self.model.heads[t].prototype_vectors, 'lr': 3 * self.lr},
             ]
             joint_params = [
-                {
-                    "params": self.model.model.features.parameters(),
-                    "lr": self.lr / 10,
-                    "weight_decay": self.wd,
-                },
-                {
-                    "params": self.model.heads[t].add_on_layers.parameters(),
-                    "lr": 3 * self.lr,
-                    "weight_decay": self.wd,
-                },
-                {"params": self.model.heads[t].prototype_vectors, "lr": 3 * self.lr},
+                {'params': self.model.model.features.parameters(), 'lr': self.lr / 10, 'weight_decay': self.wd},
+                {'params': self.model.heads[t].add_on_layers.parameters(), 'lr': 3 * self.lr,
+                 'weight_decay': self.wd},
+                {'params': self.model.heads[t].prototype_vectors, 'lr': 3 * self.lr},
             ]
-            push_params = [
-                {
-                    "params": self.model.heads[t].last_layer.parameters(),
-                    "lr": self.lr,
-                    "weight_decay": self.wd,
-                },
-            ]
+            push_params = [{'params': self.model.heads[t].last_layer.parameters(), 'lr': self.lr,
+                            'weight_decay': self.wd},
+                           ]
         else:
             warm_params = [
-                {
-                    "params": self.model.model.add_on_layers.parameters(),
-                    "lr": 3 * self.lr,
-                    "weight_decay": self.wd,
-                },
-                {"params": self.model.heads[t].prototype_vectors, "lr": 3 * self.lr},
+                {'params': self.model.model.add_on_layers.parameters(), 'lr': 3 * self.lr, 'weight_decay': self.wd},
+                {'params': self.model.heads[t].prototype_vectors, 'lr': 3 * self.lr},
             ]
             joint_params = [
-                {
-                    "params": self.model.model.features.parameters(),
-                    "lr": self.lr / 10,
-                    "weight_decay": self.wd,
-                },
-                {
-                    "params": self.model.model.add_on_layers.parameters(),
-                    "lr": 3 * self.lr,
-                    "weight_decay": self.wd,
-                },
-                {"params": self.model.heads[t].prototype_vectors, "lr": 3 * self.lr},
+                {'params': self.model.model.features.parameters(), 'lr': self.lr / 10, 'weight_decay': self.wd},
+                {'params': self.model.model.add_on_layers.parameters(), 'lr': 3 * self.lr,
+                 'weight_decay': self.wd},
+                {'params': self.model.heads[t].prototype_vectors, 'lr': 3 * self.lr},
             ]
-            push_params = [
-                {
-                    "params": self.model.heads[t].last_layer.parameters(),
-                    "lr": self.lr,
-                    "weight_decay": self.wd,
-                },
-            ]
+            push_params = [{'params': self.model.heads[t].last_layer.parameters(), 'lr': self.lr,
+                            'weight_decay': self.wd},
+                           ]
+        warm_params = warm_params + ([{'params': self.model.heads[t].proto_presence, 'lr': 3 * self.lr}] if
+                                     isinstance(self.model.model, ProtoPool) else [])
+        joint_params = joint_params + ([{'params': self.model.heads[t].proto_presence, 'lr': 3 * self.lr}] if
+                                       isinstance(self.model.model, ProtoPool) else [])
         if t > 0:
-            joint_params.extend(
-                [
-                    {"params": self.model.heads[i].prototype_vectors, "lr": self.lr_old}
-                    for i in range(t)
-                ]
-            )
-            warm_params.extend(
-                [
-                    {"params": self.model.heads[i].prototype_vectors, "lr": self.lr_old}
-                    for i in range(t)
-                ]
-            )
+            joint_params.extend([
+                {'params': self.model.heads[i].prototype_vectors, 'lr': self.lr_old} for i in range(t)
+            ])
+            warm_params.extend([
+                {'params': self.model.heads[i].prototype_vectors, 'lr': self.lr_old} for i in range(t)
+            ])
             if not self.model.model.share_add_ons:
-                joint_params.extend(
-                    [
-                        {
-                            "params": self.model.heads[i].add_on_layers.parameters(),
-                            "lr": self.lr_old,
-                        }
-                        for i in range(t)
-                    ]
-                )
-                warm_params.extend(
-                    [
-                        {
-                            "params": self.model.heads[i].add_on_layers.parameters(),
-                            "lr": self.lr_old,
-                        }
-                        for i in range(t)
-                    ]
-                )
+                joint_params.extend([
+                    {'params': self.model.heads[i].add_on_layers.parameters(), 'lr': self.lr_old} for i in range(t)
+                ])
+                warm_params.extend([
+                    {'params': self.model.heads[i].add_on_layers.parameters(), 'lr': self.lr_old} for i in range(t)
+                ])
+            warm_params = (warm_params +
+                           ([{'params': self.model.heads[i].proto_presence, 'lr': 3 * self.lr} for i in range(t)] if
+                            isinstance(self.model.model, ProtoPool) else []))
+            joint_params = (joint_params +
+                            ([{'params': self.model.heads[i].proto_presence, 'lr': 3 * self.lr} for i in range(t)] if
+                            isinstance(self.model.model, ProtoPool) else []))
 
         warm_optimizer = torch.optim.Adam(warm_params)
         joint_optimizer = torch.optim.Adam(joint_params)
@@ -245,13 +140,11 @@ class Appr(Inc_Learning_Appr_PPNet):
 
         # add exemplars to train_loader
         if len(self.exemplars_dataset) > 0 and t > 0:
-            trn_loader = torch.utils.data.DataLoader(
-                trn_loader.dataset + self.exemplars_dataset,
-                batch_size=trn_loader.batch_size,
-                shuffle=True,
-                num_workers=trn_loader.num_workers,
-                pin_memory=trn_loader.pin_memory,
-            )
+            trn_loader = torch.utils.data.DataLoader(trn_loader.dataset + self.exemplars_dataset,
+                                                     batch_size=trn_loader.batch_size,
+                                                     shuffle=True,
+                                                     num_workers=trn_loader.num_workers,
+                                                     pin_memory=trn_loader.pin_memory)
 
         if t > 0:
             self.settlement(push_loader, task=t)
@@ -259,9 +152,7 @@ class Appr(Inc_Learning_Appr_PPNet):
         super().train_loop(t, trn_loader, val_loader, push_loader)
 
         # EXEMPLAR MANAGEMENT -- select training subset
-        self.exemplars_dataset.collect_exemplars(
-            self.model, trn_loader, val_loader.dataset.transform
-        )
+        self.exemplars_dataset.collect_exemplars(self.model, trn_loader, val_loader.dataset.transform)
 
     def settlement(self, loader, task=0):
         with torch.no_grad():
@@ -270,21 +161,15 @@ class Appr(Inc_Learning_Appr_PPNet):
                 labels = []
                 for it, (input_data, label) in enumerate(loader):
                     outputs = self.model(input_data.cuda())
-                    distances = torch.cat(
-                        [outputs[i][0] for i in range(len(outputs))], dim=1
-                    )
-                    vals.append(
-                        distances.reshape(
-                            distances.shape[0], distances.shape[1], -1
-                        ).cpu()
-                    )
+                    distances = torch.cat([outputs[i][0] for i in range(len(outputs))], dim=1)
+                    vals.append(distances.reshape(distances.shape[0], distances.shape[1], -1).cpu())
                     labels.append(label)
                 vals = torch.cat(vals, dim=0)
 
                 if isinstance(self.model.model, TesNet):
                     class_vals_flt = torch.unique(vals.flatten())[:50000]
                 else:
-                    class_vals_flt = torch.unique(vals.flatten())[:: 2 ** (task - 1)]
+                    class_vals_flt = torch.unique(vals.flatten())[::2**(task-1)]
                 q_h = torch.quantile(class_vals_flt, 0.90)
                 class_vals_flt = class_vals_flt[class_vals_flt < q_h]
                 q_l = class_vals_flt.min()
@@ -306,25 +191,12 @@ class Appr(Inc_Learning_Appr_PPNet):
                 reps = torch.cat(reps, dim=0).cpu()
                 dists_all = torch.cat(dists_all, dim=0).cpu()
 
-                kmean = KMeans(
-                    n_clusters=self.model.heads[0].prototype_vectors.shape[0],
-                    max_iter=10,
-                    n_init="warn",
-                )
-                inclass_reps = (
-                    reps.permute(0, 2, 3, 1).reshape(-1, reps.shape[1]).numpy()
-                )
-                cond = (
-                    dists_all.mean(1).flatten() <= qs[1]
-                )  # * (dists_all.mean(1).flatten() >= qs[0]))
+                kmean = KMeans(n_clusters=self.model.heads[0].prototype_vectors.shape[0], max_iter=10)
+                inclass_reps = reps.permute(0, 2, 3, 1).reshape(-1, reps.shape[1]).numpy()
+                cond = ((dists_all.mean(1).flatten() <= qs[1]))  # * (dists_all.mean(1).flatten() >= qs[0]))
                 set_of_reps = inclass_reps[cond]
                 kmean.fit(set_of_reps)
-                settlers = (
-                    torch.tensor(kmean.cluster_centers_, dtype=torch.float32)
-                    .unsqueeze(2)
-                    .unsqueeze(2)
-                    .cuda()
-                )
+                settlers = torch.tensor(kmean.cluster_centers_, dtype=torch.float32).unsqueeze(2).unsqueeze(2).cuda()
                 self.model.heads[-1].prototype_vectors.data.copy_(settlers)
                 self.settlers = settlers
 
@@ -388,11 +260,13 @@ class Appr(Inc_Learning_Appr_PPNet):
                 for p in self.model.neg_heads[t - 1].parameters():
                     p.requires_grad = False
 
+        gumbel_scale = self.model.model.lambda1(e) if \
+            (isinstance(self.model.model, ProtoPool) and self.model.model.pp_gumbel) else 0
         for images, targets in trn_loader:
             # Forward old model
             distances_old = None
             distances = None
-            outputs = self.model(images.to(self.device))
+            outputs = self.model(images.to(self.device), gumbel_scale=gumbel_scale)
             if t > 0:
                 if self.model.model.repeat_task_0:
                     init_t = 1 if t > 1 else 0
@@ -400,46 +274,27 @@ class Appr(Inc_Learning_Appr_PPNet):
                     init_t = 0
                 with torch.no_grad():
                     outputs_old = self.model_old(images.to(self.device))
-                    distances_old = torch.cat(
-                        [outputs_old[i][0] for i in range(init_t, len(outputs_old))],
-                        dim=1,
-                    )
+                    distances_old = torch.cat([outputs_old[i][0] for i in range(init_t, len(outputs_old))], dim=1)
 
-                distances = torch.cat(
-                    [outputs[i][0] for i in range(init_t, len(outputs_old))], dim=1
-                )
+                distances = torch.cat([outputs[i][0] for i in range(init_t, len(outputs_old))], dim=1)
                 if self.similarity_reg:
-                    distances_old = self.model.heads[-1].distance_2_similarity(
-                        distances_old
-                    )
+                    distances_old = self.model.heads[-1].distance_2_similarity(distances_old)
                     distances = self.model.heads[-1].distance_2_similarity(distances)
             # Forward current model
             logits = [outputs[i][1] for i in range(len(outputs))]
             min_distances = [outputs[i][2] for i in range(len(outputs))]
-            entropy_loss = self.criterion(
-                t, logits, targets.to(self.device), distances, distances_old
-            )
-            (
-                clst_loss_val,
-                sep_loss_val,
-                l1_loss,
-                avg_separation_cost,
-                orth_loss,
-                sub_loss,
-            ) = self.protopnet_looses(
-                min_distances,
-                targets.to(self.device),
-                t,
-                all_out=self.exemplars_dataset is not None,
-            )
-            loss = (
-                entropy_loss
-                + clst_loss_val * 0.8
-                + sep_loss_val * self.model.model.sep_weight
-                + 1e-4 * l1_loss
-                + 1e-4 * orth_loss
-                - 1e-7 * sub_loss
-            )
+            entropy_loss = self.criterion(t, logits, targets.to(self.device), distances, distances_old)
+            clst_loss_val, sep_loss_val, l1_loss, avg_separation_cost, orth_loss, sub_loss, pp_orthogonal_loss = (
+                self.protopnet_looses(
+                    min_distances,
+                    targets.to(self.device),
+                    t,
+                    all_out=self.exemplars_dataset is not None,
+                    proto_presence=[outputs[i][-1] for i in range(len(outputs))] if \
+                        isinstance(self.model.model, ProtoPool) else None
+            ))
+            loss = entropy_loss + clst_loss_val * 0.8 + sep_loss_val * self.model.model.sep_weight + 1e-4 * l1_loss + \
+                       1e-4 * orth_loss - 1e-7 * sub_loss + pp_orthogonal_loss
             # Backward
             if e == 0:
                 self.optimizer = self.joint_optim
@@ -461,18 +316,9 @@ class Appr(Inc_Learning_Appr_PPNet):
 
     def eval(self, t, val_loader):
         """Contains the evaluation code"""
-        with torch.no_grad():
-            (
-                total_loss,
-                total_acc_taw,
-                total_acc_tag,
-                total_num,
-                total_clst,
-                total_sep,
-                total_l1,
-                total_avg_sep,
-                total_entropy,
-            ) = (0, 0, 0, 0, 0, 0, 0, 0, 0)
+        with (torch.no_grad()):
+            total_loss, total_acc_taw, total_acc_tag, total_num, total_clst, total_sep, total_l1, total_avg_sep, total_entropy = \
+                0, 0, 0, 0, 0, 0, 0, 0, 0
             self.model.eval()
             for images, targets in val_loader:
                 # Forward old model
@@ -482,71 +328,46 @@ class Appr(Inc_Learning_Appr_PPNet):
                 if t > 0:
                     with torch.no_grad():
                         outputs_old = self.model_old(images.to(self.device))
-                        distances_old = torch.cat(
-                            [outputs_old[i][0] for i in range(len(outputs_old))], dim=1
-                        )
-                    distances = torch.cat(
-                        [outputs[i][0] for i in range(len(outputs_old))], dim=1
-                    )
+                        distances_old = torch.cat([outputs_old[i][0] for i in range(len(outputs_old))], dim=1)
+                    distances = torch.cat([outputs[i][0] for i in range(len(outputs_old))], dim=1)
                     if self.similarity_reg:
-                        distances_old = self.model.heads[-1].distance_2_similarity(
-                            distances_old
-                        )
-                        distances = self.model.heads[-1].distance_2_similarity(
-                            distances
-                        )
+                        distances_old = self.model.heads[-1].distance_2_similarity(distances_old)
+                        distances = self.model.heads[-1].distance_2_similarity(distances)
                 # Forward current model
                 logits = [outputs[i][1] for i in range(len(outputs))]
                 min_distances = [outputs[i][2] for i in range(len(outputs))]
-                entropy_loss = self.criterion(
-                    t, logits, targets.to(self.device), distances, distances_old
-                )
+                entropy_loss = self.criterion(t, logits, targets.to(self.device), distances, distances_old)
                 # Log
-                (
-                    clst_loss_val,
-                    sep_loss_val,
-                    l1_loss,
-                    avg_sep_cost,
-                    orth_loss,
-                    sub_loss,
-                ) = self.protopnet_looses(
-                    min_distances,
-                    targets.to(self.device),
-                    t,
-                    all_out=self.exemplars_dataset is not None,
+                clst_loss_val, sep_loss_val, l1_loss, avg_sep_cost, orth_loss, sub_loss, pp_orthogonal_loss = \
+                    self.protopnet_looses(
+                        min_distances,
+                        targets.to(self.device),
+                        t,
+                        all_out=self.exemplars_dataset is not None,
+                        proto_presence=[outputs[i][-1] for i in range(len(outputs))] if \
+                            isinstance(self.model.model, ProtoPool) else None
                 )
-                loss = (
-                    entropy_loss
-                    + clst_loss_val * 0.8
-                    + sep_loss_val * self.model.model.sep_weight
-                    + 1e-4 * l1_loss
-                    + 1e-4 * orth_loss
-                    - 1e-7 * sub_loss
-                )
+                loss = entropy_loss + clst_loss_val * 0.8 + sep_loss_val * self.model.model.sep_weight + 1e-4 * l1_loss + \
+                       1e-4 * orth_loss - 1e-7 * sub_loss + pp_orthogonal_loss
                 hits_taw, hits_tag = self.calculate_metrics(logits, targets)
                 # Log
                 total_loss += loss.item() * len(targets)
                 total_entropy += entropy_loss.item() * len(targets)
                 total_clst += clst_loss_val.item()
                 total_sep += sep_loss_val.item()
-                total_avg_sep += avg_sep_cost.item()
+                total_avg_sep += avg_sep_cost.item() if avg_sep_cost is not None else 0
                 total_l1 += l1_loss.item()
                 total_acc_taw += hits_taw.sum().item()
                 total_acc_tag += hits_tag.sum().item()
                 total_num += len(targets)
             ppnet_losses = {
-                "clst": total_clst,
-                "sep": total_sep,
-                "avg_sep": total_avg_sep,
-                "l1": total_l1,
-                "entropy": total_entropy / total_num,
+                'clst': total_clst,
+                'sep': total_sep,
+                'avg_sep': total_avg_sep,
+                'l1': total_l1,
+                'entropy': total_entropy / total_num,
             }
-        return (
-            total_loss / total_num,
-            total_acc_taw / total_num,
-            total_acc_tag / total_num,
-            ppnet_losses,
-        )
+        return total_loss / total_num, total_acc_taw / total_num, total_acc_tag / total_num, ppnet_losses
 
     def cross_entropy(self, outputs, targets, exp=1.0, size_average=True, eps=1e-5):
         """Calculates cross-entropy with temperature scaling"""
@@ -572,31 +393,17 @@ class Appr(Inc_Learning_Appr_PPNet):
             if self.model.model.repeat_task_0:
                 t_in = t - 1
             if self.normalize_sim:
-                old_distances = old_distances / (
-                    (torch.sum(old_distances, dim=2).sum(2))[:, :, None, None] + 0.0001
-                )
-                distances = distances / (
-                    torch.sum(distances, dim=2).sum(2)[:, :, None, None] + 0.0001
-                )
+                old_distances = old_distances / ((torch.sum(old_distances, dim=2).sum(2))[:, :, None, None] + 0.0001)
+                distances = distances / (torch.sum(distances, dim=2).sum(2)[:, :, None, None] + 0.0001)
             with torch.no_grad():
-                q = torch.quantile(
-                    old_distances.reshape([distances.shape[0], distances.shape[1], -1]),
-                    self.perc / 100,
-                    dim=2,
-                )
+                q = torch.quantile(old_distances.reshape([distances.shape[0], distances.shape[1], -1]), self.perc / 100, dim=2)
                 if self.similarity_reg:
                     mask = old_distances >= q[:, :, None, None]
                 else:
                     mask = old_distances <= q[:, :, None, None]
             # Knowledge distillation loss for all previous tasks
-            loss += (self.lamb) * ((old_distances - distances) * mask).view(
-                distances.shape[0], -1
-            ).norm(2, dim=1).sum()
+            loss += (self.lamb) * ((old_distances - distances) * mask).view(distances.shape[0], - 1).norm(2, dim=1).sum()
         # Current cross-entropy loss -- with exemplars use all heads
         if len(self.exemplars_dataset) > 0:
-            return loss + torch.nn.functional.cross_entropy(
-                torch.cat(outputs, dim=1), targets
-            )
-        return loss + torch.nn.functional.cross_entropy(
-            outputs[t], targets - self.model.task_offset[t_in]
-        )
+            return loss + torch.nn.functional.cross_entropy(torch.cat(outputs, dim=1), targets)
+        return loss + torch.nn.functional.cross_entropy(outputs[t], targets - self.model.task_offset[t_in])
