@@ -128,3 +128,15 @@ dmypy.json
 # Pyre type checker
 .pyre/
 .idea/
+
+
+# A directory to store your local results, scripts etc that should not be pushed to git
+local/*
+
+
+# pretrained models
+pretrained_models/*
+
+
+# neptune files
+.neptune/*
