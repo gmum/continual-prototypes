@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+from typing import Optional
 
 import cv2
 import matplotlib.pyplot as plt
@@ -9,7 +10,6 @@ import torch.nn as nn
 from torch.nn.parameter import Parameter
 import torch.nn.functional as F
 from torch.nn.functional import gumbel_softmax
-from torchvision.transforms import ToTensor
 
 from .resnet_features import resnet18_features, resnet34_features, resnet50_features, resnet101_features, \
     resnet152_features
@@ -22,14 +22,14 @@ base_architecture_to_features = {'resnet18': resnet18_features,
                                  'resnet50': resnet50_features,
                                  'resnet101': resnet101_features,
                                  'resnet152': resnet152_features,
-                                 'resnet50Nat': resnet50_features,
-                                 }
+                                 'resnet50Nat': resnet50_features}
 
 
 class ProtoPool_head(nn.Module):
     def __init__(self, prototype_shape, num_prototypes, num_descriptive, num_classes, prototype_activation_function,
                  focal, share_add_ons=True, first_add_on_layer_in_channels=None, incorrect_weight=-0.5,
-                 incorrect_weight_btw_tasks=False, use_last_layer=True):
+                 incorrect_weight_btw_tasks=False, use_last_layer=True,
+                 prototype_vectors: Optional[torch.Tensor] = None):
         super(ProtoPool_head, self).__init__()
         self.num_prototypes = num_prototypes
         self.num_descriptive = num_descriptive
@@ -41,7 +41,11 @@ class ProtoPool_head(nn.Module):
         self.share_add_ons = share_add_ons
         self.incorrect_weight = incorrect_weight
 
-        self.prototype_vectors = nn.Parameter(torch.rand(self.prototype_shape), requires_grad=True)
+        if prototype_vectors is not None:
+            self.prototype_vectors = prototype_vectors
+        else:
+            self.prototype_vectors = nn.Parameter(torch.rand(self.prototype_shape), requires_grad=True)
+
         # do not make this just a tensor,
         # since it will not be moved automatically to gpu
         self.ones = nn.Parameter(torch.ones(self.prototype_shape), requires_grad=False)
@@ -55,7 +59,8 @@ class ProtoPool_head(nn.Module):
 
         self.use_last_layer = use_last_layer
         if self.use_last_layer:
-            self.prototype_class_identity = torch.zeros(self.num_descriptive * self.num_classes, self.num_classes).cuda()
+            self.prototype_class_identity = torch.zeros(self.num_descriptive * self.num_classes,
+                                                        self.num_classes).cuda()
 
             for j in range(self.num_descriptive * self.num_classes):
                 self.prototype_class_identity[j, j // self.num_descriptive] = 1
@@ -189,10 +194,9 @@ class ProtoPool(nn.Module):
                  add_on_layers_type='bottleneck',
                  focal=False, warm_num=10, push_at=10, num_push_tune=10, sep_weight=-0.08, share_add_ons=True,
                  incorrect_weight=-0.5, incorrect_weight_btw_tasks=False, repeat_task_0=False,
-
-                 num_prototypes=202, num_descriptive=10, use_thresh=False, arch='resnet34', pretrained=True,
-                 proto_depth=128, use_last_layer=False, inat=False, pp_ortho=True, pp_gumbel=True, gumbel_time=30
-                 ):
+                 num_descriptive=10, use_thresh=False, arch='resnet34', pretrained=True,
+                 proto_depth=128, use_last_layer=False, inat=False, pp_ortho=True, pp_gumbel=True, gumbel_time=30,
+                 freeze_after_first_task: bool = False):
 
         super(ProtoPool, self).__init__()
         self.focal = focal
@@ -210,6 +214,7 @@ class ProtoPool(nn.Module):
         self.incorrect_weight = incorrect_weight
         self.incorrect_weight_btw_tasks = incorrect_weight_btw_tasks
         self.repeat_task_0 = repeat_task_0
+        self.freeze_after_first_task = freeze_after_first_task
 
         self.num_descriptive = num_descriptive
         self.use_thresh = use_thresh
@@ -277,11 +282,17 @@ class ProtoPool(nn.Module):
 
                 self.add_on_layers = nn.Sequential(*add_on_layers)
 
+        if freeze_after_first_task:
+            self.shared_proto_vector = nn.Parameter(torch.rand(self.prototype_shape), requires_grad=True)
+        else:
+            self.shared_proto_vector = None
+
         self.protopool_head = ProtoPool_head(self.prototype_shape, self.num_prototypes, self.num_descriptive,
                                              self.num_classes, self.prototype_activation_function,
                                              self.focal, self.share_add_ons,
                                              first_add_on_layer_in_channels, incorrect_weight=self.incorrect_weight,
-                                             use_last_layer=use_last_layer)
+                                             use_last_layer=use_last_layer,
+                                             prototype_vectors=self.shared_proto_vector)
 
         self.head_var = 'protopool_head'
 
@@ -586,22 +597,21 @@ def update_prototypes_on_batch_protopool(search_batch_input,
 
 
 def construct_ProtoPool(base_architecture, pretrained=True, img_size=224,
-                    prototype_shape=(202, 512, 1, 1), num_classes=200,
-                    prototype_activation_function='log',
-                    add_on_layers_type='bottleneck', focal=False, warm_num=10, push_at=10, num_push_tune=10,
-                    sep_weight=-0.08, share_add_ons=True, incorrect_weight=-0.5,
-                    incorrect_weight_btw_tasks=False,
-                    repeat_task_0=False,
-
-                    pp_ortho=True,
-                    pp_gumbel=True,
-                    gumbel_time=30,
-                    num_prototypes=202,
-                    num_descriptive=10,
-                    use_thresh=True,
-                    proto_depth=512,
-                    use_last_layer=True,
-                    inat=True):
+                        prototype_shape=(202, 512, 1, 1), num_classes=200,
+                        freeze_after_first_task=False,
+                        prototype_activation_function='log',
+                        add_on_layers_type='bottleneck', focal=False, warm_num=10, push_at=10, num_push_tune=10,
+                        sep_weight=-0.08, share_add_ons=True, incorrect_weight=-0.5,
+                        incorrect_weight_btw_tasks=False,
+                        repeat_task_0=False,
+                        pp_ortho=True,
+                        pp_gumbel=True,
+                        gumbel_time=30,
+                        num_descriptive=10,
+                        use_thresh=True,
+                        proto_depth=512,
+                        use_last_layer=True,
+                        inat=True):
     if 'Nat' in base_architecture:
         features = base_architecture_to_features[base_architecture](pretrained=pretrained, inat=True)
     else:
@@ -614,6 +624,7 @@ def construct_ProtoPool(base_architecture, pretrained=True, img_size=224,
                                                          prototype_kernel_size=prototype_shape[2])
     return ProtoPool(features=features,
                      img_size=img_size,
+                     freeze_after_first_task=freeze_after_first_task,
                      prototype_shape=prototype_shape,
                      proto_layer_rf_info=proto_layer_rf_info,
                      num_classes=num_classes,
@@ -629,11 +640,9 @@ def construct_ProtoPool(base_architecture, pretrained=True, img_size=224,
                      incorrect_weight=incorrect_weight,
                      incorrect_weight_btw_tasks=incorrect_weight_btw_tasks,
                      repeat_task_0=repeat_task_0,
-
                      pp_ortho=pp_ortho,
                      pp_gumbel=pp_gumbel,
                      gumbel_time=gumbel_time,
-                     num_prototypes=num_prototypes,
                      num_descriptive=num_descriptive,
                      use_thresh=use_thresh,
                      proto_depth=proto_depth,
@@ -643,7 +652,8 @@ def construct_ProtoPool(base_architecture, pretrained=True, img_size=224,
 
 
 def push(global_min_fmap_patches, global_min_proto_dist, model_lll, proto_bound_boxes, proto_rf_boxes,
-         search_batch_input, search_y, start_index_of_search_batch, prototype_class_identity=None, task=0, log_path='./'):
+         search_batch_input, search_y, start_index_of_search_batch, prototype_class_identity=None, task=0,
+         log_path='./'):
     proto_img_dir = f'{log_path}/img_proto/task_{task}'
     Path(proto_img_dir).mkdir(parents=True, exist_ok=True)
     prototype_list = torch.zeros((model_lll.model.num_prototypes, 3, 224, 224))
@@ -664,4 +674,3 @@ def push(global_min_fmap_patches, global_min_proto_dist, model_lll, proto_bound_
                                          prototype_activation_function_in_numpy=None,
                                          prototype_list=prototype_list,
                                          task=task)
-

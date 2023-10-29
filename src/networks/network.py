@@ -153,6 +153,7 @@ class LLL_Net_PPNet(LLL_Net):
                     incorrect_weight=self.model.incorrect_weight,
                     share_add_ons=self.model.share_add_ons,
                     first_add_on_layer_in_channels=self.model.first_add_on_layer_in_channels,
+                    prototype_vectors=self.model.shared_proto_vector,
                 )
             )
         if self.model.incorrect_weight_btw_tasks and (len(self.heads) > 1) and not isinstance(self.model, ProtoPool):
