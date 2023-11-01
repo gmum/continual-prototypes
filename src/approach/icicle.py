@@ -293,13 +293,17 @@ class Appr(Inc_Learning_Appr_PPNet):
             for p in self.model.model.features.parameters():
                 p.requires_grad = False
 
-        gumbel_scale = self.model.model.lambda1(e) if \
-            (isinstance(self.model.model, ProtoPool) and self.model.model.pp_gumbel) else 0
+        forward_kwargs = {}
+        if isinstance(self.model.model, ProtoPool) and self.model.model.pp_gumbel:
+            gumbel_scale = self.model.model.lambda1(e)
+            self.logger.log_scalar(task=t, iter=e + 1, name="gumbel_scale", value=gumbel_scale, group="train")
+            forward_kwargs['gumbel_scale'] = gumbel_scale
+
         for images, targets in trn_loader:
             # Forward old model
             distances_old = None
             distances = None
-            outputs = self.model(images.to(self.device), gumbel_scale=gumbel_scale)
+            outputs = self.model(images.to(self.device), **forward_kwargs)
             if t > 0:
                 if self.model.model.repeat_task_0:
                     init_t = 1 if t > 1 else 0
