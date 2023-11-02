@@ -117,6 +117,7 @@ def main(argv=None):
     parser.add_argument('--repeat_task_0', action='store_true', help='Repeat task 0')
 
     # ProtoPool args
+    parser.add_argument('--num_prototypes', type=int, default=200)
     parser.add_argument('--num_descriptive', type=int, default=10)
     parser.add_argument('--pp_ortho', action='store_true')
     parser.add_argument('--pp_gumbel', action='store_true')
@@ -199,12 +200,11 @@ def main(argv=None):
         )
     elif 'protopool' in args.network:
         from networks.protopool import construct_ProtoPool
-        protos_per_pool = 51
         init_model = construct_ProtoPool(
             args.network.replace('protopool_', ''),
             pretrained=True,
             img_size=224,
-            prototype_shape=(protos_per_pool, args.proto_depth, 1, 1),
+            prototype_shape=(args.num_prototypes, args.proto_depth, 1, 1),
             num_classes=int(num_cls),
             prototype_activation_function=args.ppnet_sim,
             add_on_layers_type='linear',
@@ -221,7 +221,7 @@ def main(argv=None):
             pp_ortho=args.pp_ortho,
             pp_gumbel=args.pp_gumbel,
             gumbel_time=args.gumbel_time,
-            num_prototypes=protos_per_pool,
+            num_prototypes=args.num_prototypes,
             num_descriptive=args.num_descriptive,
             use_thresh=args.use_thresh,
             proto_depth=args.proto_depth,
